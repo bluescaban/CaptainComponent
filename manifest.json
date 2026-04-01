@@ -1,0 +1,9 @@
+{
+  "name": "Captain Component",
+  "id": "captain-component",
+  "api": "1.0.0",
+  "main": "dist/controller.js",
+  "ui": "dist/index.html",
+  "editorType": ["figma"],
+  "permissions": ["currentuser"]
+}
