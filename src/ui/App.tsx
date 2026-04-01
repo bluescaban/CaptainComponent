@@ -1,39 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import './styles/global.css';
-import FrameSelector from './components/FrameSelector';
-import AnalysisPanel from './components/AnalysisPanel';
-import ProgressBar from './components/ProgressBar';
-import ComponentList from './components/ComponentList';
-import { useOpenAI } from './hooks/useOpenAI';
 import { useFigmaSelection } from './hooks/useFigmaSelection';
-import { ComponentDefinition, PluginToUIMessage } from '../shared/types';
+import { PluginToUIMessage, SerializedNode } from '../shared/types';
 
-type AppState = 'idle' | 'analyzing' | 'analyzed' | 'building' | 'complete' | 'error';
+type AppState = 'idle' | 'converting' | 'converted' | 'error';
+
+const TYPE_ICON: Record<string, string> = {
+  FRAME: '▣', GROUP: '◈', TEXT: 'T', RECTANGLE: '▭',
+  ELLIPSE: '◯', VECTOR: '✦', COMPONENT: '❖', INSTANCE: '◆',
+};
+
+function LayerRow({ node }: { node: SerializedNode }) {
+  const icon = TYPE_ICON[node.type] ?? '·';
+  return (
+    <div className="layer-row">
+      <span className="layer-icon">{icon}</span>
+      <span className="layer-name">{node.name}</span>
+      <span className="layer-type">{node.type.charAt(0) + node.type.slice(1).toLowerCase()}</span>
+    </div>
+  );
+}
 
 export default function App() {
-  const [appState, setAppState] = useState<AppState>('idle');
-  // Seeded from .env at build time; user can still override in the input field
-  const [apiKey, setApiKey]     = useState<string>(__OPENAI_API_KEY__);
-  const [showKey, setShowKey]   = useState(false);
-  const [components, setComponents] = useState<ComponentDefinition[]>([]);
-  const [progress, setProgress] = useState({ current: 0, total: 0, name: '' });
-  const [error, setError]       = useState('');
+  const [appState, setAppState]     = useState<AppState>('idle');
+  const [prompt, setPrompt]         = useState('');
+  const [convertProgress, setConvertProgress] = useState('');
+  const [convertedCount, setConvertedCount]   = useState(0);
+  const [error, setError]           = useState('');
 
   const { selectedNode, selectionError } = useFigmaSelection();
-  const { analyze } = useOpenAI(apiKey);
 
-  // Listen to plugin → UI messages
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const msg: PluginToUIMessage = event.data?.pluginMessage;
       if (!msg) return;
-
       switch (msg.type) {
-        case 'BUILD_PROGRESS':
-          setProgress({ current: msg.current, total: msg.total, name: msg.componentName });
+        case 'COMPONENTIZE_PROGRESS':
+          setConvertProgress(msg.name);
           break;
-        case 'BUILD_COMPLETE':
-          setAppState('complete');
+        case 'COMPONENTIZE_COMPLETE':
+          setConvertedCount(msg.count);
+          setAppState('converted');
           break;
         case 'ERROR':
           setError(msg.message);
@@ -45,148 +52,122 @@ export default function App() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  const handleAnalyze = async () => {
+  const handleConvert = () => {
     if (!selectedNode) return;
-    if (!apiKey.trim()) { setError('Enter your OpenAI API key first.'); return; }
     setError('');
-    setAppState('analyzing');
-    try {
-      const result = await analyze(selectedNode);
-      setComponents(result.components);
-      setAppState('analyzed');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Analysis failed.');
-      setAppState('error');
-    }
-  };
-
-  const handleBuild = () => {
-    if (components.length === 0) return;
-    setAppState('building');
-    setProgress({ current: 0, total: components.length, name: '' });
-    parent.postMessage({ pluginMessage: { type: 'BUILD_COMPONENTS', components } }, '*');
+    setConvertProgress('');
+    setConvertedCount(0);
+    setAppState('converting');
+    parent.postMessage({ pluginMessage: { type: 'COMPONENTIZE_IN_PLACE', prompt: prompt.trim() || undefined } }, '*');
   };
 
   const handleReset = () => {
     setAppState('idle');
-    setComponents([]);
     setError('');
-    setProgress({ current: 0, total: 0, name: '' });
+    setConvertProgress('');
+    setConvertedCount(0);
   };
 
-  const canAnalyze = !!selectedNode && !!apiKey.trim();
+  const layers: SerializedNode[] = selectedNode?.children ?? (selectedNode ? [selectedNode] : []);
+  const canConvert = !!selectedNode && appState === 'idle';
 
   return (
     <div className="app">
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="header">
-        <div className="header-row">
-          <span className="logo">⚓</span>
-          <div>
-            <h1 className="header-title">Captain Component</h1>
-            <p className="header-sub">AI component library generator</p>
-          </div>
+        <span className="logo">⚓</span>
+        <div>
+          <h1 className="header-title">Captain Component</h1>
+          <p className="header-sub">Figma component generator</p>
         </div>
       </header>
 
-      {/* ── Main content ────────────────────────────────────────────────────── */}
+      {/* ── Main ───────────────────────────────────────────────────────────── */}
       <main className="main">
 
-        {/* API Key */}
-        <section className="section">
-          <label className="label">OpenAI API Key</label>
-          <div className="input-row">
-            <input
-              className="input"
-              type={showKey ? 'text' : 'password'}
-              placeholder="sk-proj-..."
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-            />
-            <button
-              className="icon-btn"
-              title={showKey ? 'Hide key' : 'Show key'}
-              onClick={() => setShowKey(v => !v)}
-            >
-              {showKey ? '🙈' : '👁'}
-            </button>
-          </div>
-        </section>
+        {/* Selection card */}
+        <div className="glass-card">
+          <p className="card-label">Selection</p>
 
-        {/* Frame selector */}
-        <section className="section">
-          <FrameSelector node={selectedNode} error={selectionError} />
-        </section>
+          {selectedNode ? (
+            <>
+              <div className="selection-header">
+                <span className="sel-icon">▣</span>
+                <div className="sel-meta">
+                  <span className="sel-name">{selectedNode.name}</span>
+                  <span className="sel-size">
+                    {Math.round(selectedNode.width ?? 0)} × {Math.round(selectedNode.height ?? 0)} px
+                    {layers.length > 0 && ` · ${layers.length} layer${layers.length !== 1 ? 's' : ''}`}
+                  </span>
+                </div>
+                <span className="sel-check">✓</span>
+              </div>
+
+              {layers.length > 0 && (
+                <div className="layer-list">
+                  {layers.slice(0, 12).map(l => <LayerRow key={l.id} node={l} />)}
+                  {layers.length > 12 && (
+                    <p className="layer-more">+{layers.length - 12} more layers</p>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="empty-state">
+              <span className="empty-icon">▣</span>
+              <span className="empty-hint">{selectionError || 'Select a Frame in Figma'}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Prompt card */}
+        <div className="glass-card">
+          <p className="card-label">Component purpose <span className="card-label-optional">(optional)</span></p>
+          <textarea
+            className="prompt-input"
+            placeholder="e.g. Chat interface with a message input, send button, and emoji picker…"
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            rows={3}
+            disabled={appState === 'converting'}
+          />
+        </div>
 
         {/* Error */}
-        {error && (
-          <div className="banner banner-error">⚠ {error}</div>
-        )}
-
-        {/* Analysis results */}
-        {(appState === 'analyzed' || appState === 'building' || appState === 'complete') && (
-          <>
-            <AnalysisPanel components={components} />
-            <ComponentList components={components} />
-          </>
-        )}
-
-        {/* Progress bar */}
-        {appState === 'building' && (
-          <ProgressBar
-            current={progress.current}
-            total={progress.total}
-            label={progress.name}
-          />
+        {error && appState === 'error' && (
+          <div className="banner-error">⚠ {error}</div>
         )}
 
         {/* Success */}
-        {appState === 'complete' && (
-          <div className="banner banner-success">
-            ✅ {components.length} components built in "Components" page!
+        {appState === 'converted' && (
+          <div className="banner-success">
+            ✓ {convertedCount} component{convertedCount !== 1 ? 's' : ''} created in Components page
           </div>
         )}
+
       </main>
 
-      {/* ── Footer actions ───────────────────────────────────────────────────── */}
+      {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <footer className="footer">
         {(appState === 'idle' || appState === 'error') && (
-          <button
-            className="btn btn-primary btn-full"
-            onClick={handleAnalyze}
-            disabled={!canAnalyze}
-          >
-            Analyze Frame with GPT-4o
+          <button className="btn-convert" onClick={handleConvert} disabled={!canConvert}>
+            Convert to Components
           </button>
         )}
 
-        {appState === 'analyzing' && (
-          <button className="btn btn-primary btn-full" disabled>
-            <span className="spinner" /> Analyzing with GPT-4o…
-          </button>
-        )}
-
-        {appState === 'analyzed' && (
-          <div className="btn-row">
-            <button className="btn btn-ghost" onClick={handleReset}>Reset</button>
-            <button className="btn btn-primary" onClick={handleBuild}>
-              Build {components.length} Components →
-            </button>
+        {appState === 'converting' && (
+          <div className="converting-state">
+            <div className="spinner" />
+            <span>{convertProgress ? `Converting: ${convertProgress}` : 'Converting…'}</span>
           </div>
         )}
 
-        {appState === 'building' && (
-          <button className="btn btn-primary btn-full" disabled>
-            Building components…
-          </button>
-        )}
-
-        {appState === 'complete' && (
-          <button className="btn btn-ghost btn-full" onClick={handleReset}>
-            Start Over
-          </button>
+        {appState === 'converted' && (
+          <button className="btn-ghost" onClick={handleReset}>Convert Another</button>
         )}
       </footer>
+
     </div>
   );
 }

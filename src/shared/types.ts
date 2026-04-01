@@ -65,6 +65,8 @@ export type PluginToUIMessage =
   | { type: 'LOADED_KEY'; apiKey: string }
   | { type: 'BUILD_PROGRESS'; current: number; total: number; componentName: string }
   | { type: 'BUILD_COMPLETE' }
+  | { type: 'COMPONENTIZE_PROGRESS'; name: string }
+  | { type: 'COMPONENTIZE_COMPLETE'; count: number }
   | { type: 'ERROR'; message: string };
 
 export type UIToPluginMessage =
@@ -72,4 +74,5 @@ export type UIToPluginMessage =
   | { type: 'SAVE_API_KEY'; apiKey: string }
   | { type: 'LOAD_API_KEY' }
   | { type: 'BUILD_COMPONENTS'; components: ComponentDefinition[] }
+  | { type: 'COMPONENTIZE_IN_PLACE'; prompt?: string }
   | { type: 'CANCEL' };

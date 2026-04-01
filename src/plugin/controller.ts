@@ -2,6 +2,7 @@
 
 import { serializeNode } from './nodeSerializer';
 import { buildComponents } from './componentBuilder';
+import { componentizeInPlace } from './componentizer';
 import { UIToPluginMessage, PluginToUIMessage } from '../shared/types';
 
 figma.showUI(__html__, { width: 320, height: 560, title: 'Captain Component' });
@@ -57,6 +58,29 @@ figma.ui.onmessage = async (raw: UIToPluginMessage) => {
           send({ type: 'BUILD_PROGRESS', current, total, componentName: name });
         });
         send({ type: 'BUILD_COMPLETE' });
+      } catch (err) {
+        send({ type: 'ERROR', message: String(err) });
+      }
+      break;
+    }
+
+    // ── Convert selected frame + its Frame/Group children into ComponentNodes ─
+    case 'COMPONENTIZE_IN_PLACE': {
+      const sel = figma.currentPage.selection;
+      if (sel.length === 0) {
+        send({ type: 'ERROR', message: 'Select a frame first.' });
+        return;
+      }
+      const node = sel[0];
+      if (node.type !== 'FRAME' && node.type !== 'GROUP') {
+        send({ type: 'ERROR', message: 'Selected layer must be a Frame or Group.' });
+        return;
+      }
+      try {
+        const count = await componentizeInPlace(node, (name) => {
+          send({ type: 'COMPONENTIZE_PROGRESS', name });
+        });
+        send({ type: 'COMPONENTIZE_COMPLETE', count });
       } catch (err) {
         send({ type: 'ERROR', message: String(err) });
       }

@@ -60,9 +60,6 @@ export async function buildComponents(
   }
   figma.currentPage = page;
 
-  // Clear existing content
-  page.children.forEach(n => n.remove());
-
   const organized = organizeByAtomicLevel(components);
   const sections: { label: string; items: ComponentDefinition[] }[] = [
     { label: 'Atoms',     items: organized.atoms },
@@ -72,7 +69,12 @@ export async function buildComponents(
 
   let total = components.length;
   let current = 0;
-  let pageX = 80;
+
+  // Place new sections to the right of any existing content on the page
+  const existingRight = page.children.reduce((max, n) => {
+    return 'x' in n && 'width' in n ? Math.max(max, (n.x as number) + (n.width as number)) : max;
+  }, 0);
+  let pageX = existingRight > 0 ? existingRight + 120 : 80;
 
   for (const section of sections) {
     if (section.items.length === 0) continue;

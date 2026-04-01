@@ -1,17 +1,12 @@
-import { SerializedNode, SerializedPaint } from '../shared/types';
+import { SerializedNode } from '../shared/types';
 
-const MAX_CHILDREN = 40;
-const MAX_DEPTH = 6;
+const MAX_CHILDREN = 12;
+const MAX_DEPTH = 3;
 
-function serializePaints(paints: readonly Paint[]): SerializedPaint[] {
-  return paints.map(p => {
-    const out: SerializedPaint = { type: p.type };
-    if (p.type === 'SOLID') {
-      out.color = { r: p.color.r, g: p.color.g, b: p.color.b };
-      out.opacity = p.opacity ?? 1;
-    }
-    return out;
-  });
+// Convert RGB to a compact hex string instead of 3 floats
+function toHex(r: number, g: number, b: number): string {
+  const hex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
 }
 
 export function serializeNode(node: SceneNode, depth = 0): SerializedNode {
@@ -21,52 +16,44 @@ export function serializeNode(node: SceneNode, depth = 0): SerializedNode {
     type: node.type,
   };
 
-  if ('width' in node) out.width = node.width;
-  if ('height' in node) out.height = node.height;
-  if ('opacity' in node) out.opacity = node.opacity;
-  if ('visible' in node) out.visible = node.visible;
+  if ('width' in node)   out.width  = Math.round(node.width);
+  if ('height' in node)  out.height = Math.round(node.height);
 
+  // Only include opacity if non-default
+  if ('opacity' in node && node.opacity !== 1) out.opacity = node.opacity;
+
+  // Skip invisible nodes entirely from children (handled below)
+  // Just record the first solid fill color compactly
   if ('fills' in node && node.fills !== figma.mixed) {
-    out.fills = serializePaints(node.fills as readonly Paint[]);
+    const solid = (node.fills as readonly Paint[]).find(p => p.type === 'SOLID') as SolidPaint | undefined;
+    if (solid) out.fills = [{ type: 'SOLID', color: { r: solid.color.r, g: solid.color.g, b: solid.color.b } }];
   }
-  if ('strokes' in node) {
-    out.strokes = serializePaints(node.strokes as readonly Paint[]);
-  }
-  if ('effects' in node) {
-    out.effects = (node.effects as readonly Effect[]).map(e => ({ type: e.type }));
-  }
-  if ('constraints' in node) {
-    out.constraints = {
-      horizontal: node.constraints.horizontal,
-      vertical: node.constraints.vertical,
-    };
-  }
-  if ('cornerRadius' in node && node.cornerRadius !== figma.mixed) {
+
+  if ('cornerRadius' in node && node.cornerRadius !== figma.mixed && (node.cornerRadius as number) > 0) {
     out.cornerRadius = node.cornerRadius as number;
   }
+
+  // Text nodes: just the content + font size
   if ('characters' in node) {
-    out.characters = node.characters;
+    out.characters = node.characters.slice(0, 80); // cap long text
     if ('fontSize' in node && node.fontSize !== figma.mixed) {
       out.fontSize = node.fontSize as number;
     }
-    if ('fontName' in node && node.fontName !== figma.mixed) {
-      const fn = node.fontName as FontName;
-      out.fontName = { family: fn.family, style: fn.style };
-    }
   }
-  if ('layoutMode' in node) {
+
+  // Auto layout
+  if ('layoutMode' in node && node.layoutMode !== 'NONE') {
     out.layoutMode = node.layoutMode;
-    if (node.layoutMode !== 'NONE') {
-      out.paddingLeft = node.paddingLeft;
-      out.paddingRight = node.paddingRight;
-      out.paddingTop = node.paddingTop;
-      out.paddingBottom = node.paddingBottom;
-      out.itemSpacing = node.itemSpacing;
-    }
+    out.paddingLeft   = node.paddingLeft;
+    out.paddingRight  = node.paddingRight;
+    out.paddingTop    = node.paddingTop;
+    out.paddingBottom = node.paddingBottom;
+    out.itemSpacing   = node.itemSpacing;
   }
 
   if ('children' in node && depth < MAX_DEPTH) {
     out.children = node.children
+      .filter(c => c.visible !== false)  // skip hidden layers
       .slice(0, MAX_CHILDREN)
       .map(child => serializeNode(child, depth + 1));
   }
