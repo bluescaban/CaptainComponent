@@ -7,8 +7,9 @@
  * parent is processed.
  */
 
-import { inferName, inferSection } from './nameInference';
+import { inferName } from './nameInference';
 import { createVariantSet } from './variantBuilder';
+import { DuplicateTracker } from './deduplicator';
 
 type ProgressFn = (name: string) => void;
 
@@ -38,10 +39,16 @@ export async function componentizeInPlace(
 
   let count = 0;
   const componentsPage = getOrCreatePage('Components');
+  const tracker = new DuplicateTracker();
 
   // Pre-load the font once up-front so section labels render synchronously
   await figma.loadFontAsync({ family: 'Inter', style: 'Bold' });
   await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+
+  // Section name = the root frame's meaningful name (or inferred type).
+  // All children are placed in the same section so everything stays grouped.
+  const rootMeaningfulName = inferName(root as FrameNode | GroupNode);
+  const sectionName        = rootMeaningfulName;
 
   async function recurse(node: FrameNode | GroupNode, isRoot: boolean): Promise<ComponentNode> {
     if ('children' in node) {
@@ -53,7 +60,6 @@ export async function componentizeInPlace(
     }
 
     const inferredName = inferName(node);
-    const sectionName  = inferSection(node);
     node.name          = inferredName;
     onProgress(inferredName);
 
@@ -62,17 +68,36 @@ export async function componentizeInPlace(
     const compX      = node.x;
     const compY      = node.y;
 
+    // Fingerprint BEFORE conversion — node.remove() is called inside convertNodeToComponent
+    // so any access to the node after that throws "node does not exist".
+    const dedupKey = !isRoot ? tracker.getKey(node) : null;
+
+    if (!isRoot && dedupKey) {
+      const existing = tracker.check(dedupKey);
+      if (existing) {
+        // Duplicate — replace with an instance of the already-created component
+        const inst = existing.createInstance();
+        inst.x = compX;
+        inst.y = compY;
+        if (compParent && 'insertChild' in compParent) {
+          (compParent as any).insertChild(compIdx, inst);
+        } else if (compParent && 'appendChild' in compParent) {
+          (compParent as any).appendChild(inst);
+        }
+        node.remove();
+        return existing;
+      }
+    }
+
     const comp = await convertNodeToComponent(node);
     count++;
 
     if (!isRoot) {
-      const setName = comp.name;
+      if (dedupKey) tracker.register(dedupKey, comp);
 
-      // Park comp on the Components page so combineAsVariants has a valid parent
+      const setName = comp.name;
       componentsPage.appendChild(comp);
       const { set, baseComp } = createVariantSet(comp, setName);
-
-      // Place the finished ComponentSet into its section
       addSetToSection(componentsPage, set, sectionName);
 
       const inst = baseComp.createInstance();
@@ -90,12 +115,12 @@ export async function componentizeInPlace(
   }
 
   const rootComp    = await recurse(root as FrameNode | GroupNode, true);
-  const rootSection = inferSection(rootComp as unknown as FrameNode);
   const rootSetName = rootComp.name;
 
   componentsPage.appendChild(rootComp);
   const { set: rootSet, baseComp: rootBase } = createVariantSet(rootComp, rootSetName);
-  addSetToSection(componentsPage, rootSet, rootSection);
+  // Root component goes at the top of its own section
+  addSetToSection(componentsPage, rootSet, sectionName);
 
   const instance = rootBase.createInstance();
   instance.x = originalX;
@@ -315,14 +340,30 @@ async function convertNodeToComponent(node: FrameNode | GroupNode): Promise<Comp
     }
 
     comp.clipsContent = node.clipsContent;
-    comp.strokeWeight = node.strokeWeight;
     comp.strokeAlign  = node.strokeAlign;
+    // strokeWeight may be figma.mixed when individual side weights are set.
+    // Always copy all four individual weights first to avoid "Cannot unwrap symbol".
+    comp.strokeTopWeight    = node.strokeTopWeight;
+    comp.strokeRightWeight  = node.strokeRightWeight;
+    comp.strokeBottomWeight = node.strokeBottomWeight;
+    comp.strokeLeftWeight   = node.strokeLeftWeight;
   } else {
     comp.fills = [];
   }
 
   for (const child of [...node.children]) {
-    comp.appendChild(child);
+    if (child.type === 'COMPONENT' || child.type === 'COMPONENT_SET') {
+      // A ComponentNode cannot be moved inside another ComponentNode.
+      // This happens when deduplication leaves a ComponentNode in place,
+      // or when the source design already contains component children.
+      // Create an instance at the same relative position instead.
+      const inst = (child as ComponentNode).createInstance();
+      inst.x = child.x;
+      inst.y = child.y;
+      comp.appendChild(inst);
+    } else {
+      comp.appendChild(child);
+    }
   }
 
   (parent as any).insertChild(index, comp);

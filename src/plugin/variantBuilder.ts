@@ -1,19 +1,76 @@
 /// <reference types="@figma/plugin-typings" />
 
 /**
- * Generates 4 variants from the original component without destroying its design.
+ * Microsoft Fluent Design System for Web — variant generator.
  *
- * Light/Default  — original unchanged (source of truth)
- * Dark/Default   — root bg inverted to dark, text inverted to light
- * Dark/Hover     — same as dark + border replaced with #40B8FD
- * Light/Disabled — original + desaturated fills + 40% opacity
+ * Produces 5 ComponentNode variants from the source design:
  *
- * Everything else (corner radius, padding, layout, shadows, icon colors,
- * image fills, accent colors) is preserved from the original.
+ *  Theme=Light, State=Default   — source of truth, untouched
+ *  Theme=Light, State=Hover     — NeutralBackground1Hover bg + accessible stroke
+ *  Theme=Light, State=Selected  — Communication Tint 40 bg + Brand left bar
+ *  Theme=Light, State=Disabled  — desaturated + 40% opacity
+ *  Theme=Dark,  State=Default   — dark canvas bg + inverted text
+ *
+ * Token reference: Fluent UI Web (2024)
+ * https://react.fluentui.dev/?path=/docs/theme-colors--page
  */
 
-// Reference border colors from the spec — only used for the hover stroke
-const HOVER_BORDER: RGB = { r: 0.251, g: 0.722, b: 0.992 }; // #40B8FD
+// ── Fluent Light Tokens ───────────────────────────────────────────────────────
+const L = {
+  // Backgrounds
+  canvas:             rgb(0xFF, 0xFF, 0xFF), // NeutralBackground1
+  canvasHover:        rgb(0xF3, 0xF2, 0xF1), // NeutralBackground1Hover
+  canvasPressed:      rgb(0xED, 0xEB, 0xE9), // NeutralBackground1Pressed
+  subtle:             rgb(0xFA, 0xF9, 0xF8), // NeutralBackground2
+  subtleHover:        rgb(0xF3, 0xF2, 0xF1), // NeutralBackground2Hover
+
+  // Strokes
+  stroke:             rgb(0xD1, 0xCF, 0xCD), // NeutralStroke1
+  strokeHover:        rgb(0x84, 0x82, 0x7E), // NeutralStroke1Hover
+  strokeAccessible:   rgb(0x60, 0x5E, 0x5C), // NeutralStrokeAccessible
+  strokeFocus:        rgb(0x00, 0x78, 0xD4), // StrokeFocus2 (brand)
+
+  // Text
+  textPrimary:        rgb(0x20, 0x1F, 0x1E), // NeutralForeground1
+  textSecondary:      rgb(0x60, 0x5E, 0x5C), // NeutralForeground2
+  textDisabled:       rgb(0xA1, 0x9F, 0x9D), // NeutralForegroundDisabled
+  textOnBrand:        rgb(0xFF, 0xFF, 0xFF), // NeutralForegroundOnBrand
+
+  // Brand
+  brand:              rgb(0x00, 0x78, 0xD4), // Selected border — #0078D4
+  brandHover:         rgb(0x10, 0x6E, 0xBE), // Selected border hover
+  brandTint40:        rgb(0xE8, 0xF5, 0xFC), // Selected bg — #E8F5FC
+
+  // Elevation shadow — Level 2 (inputs, cards)
+  shadow2: [
+    { type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.132 }, offset: { x: 0, y: 1.6 }, radius: 3.6, spread: 0, visible: true, blendMode: 'NORMAL' },
+    { type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.108 }, offset: { x: 0, y: 0.3 }, radius: 0.9, spread: 0, visible: true, blendMode: 'NORMAL' },
+  ] as Effect[],
+};
+
+// ── Fluent Dark Tokens ────────────────────────────────────────────────────────
+const D = {
+  canvas:           rgb(0x20, 0x1F, 0x1E), // NeutralBackground1 dark
+  canvasHover:      rgb(0x3B, 0x3A, 0x39), // NeutralBackground1Hover dark
+  canvasElevated:   rgb(0x29, 0x28, 0x27), // NeutralBackground3 dark
+
+  stroke:           rgb(0x60, 0x5E, 0x5C), // NeutralStroke1 dark
+  strokeHover:      rgb(0x84, 0x82, 0x7E), // NeutralStroke1Hover dark
+
+  textPrimary:      rgb(0xFF, 0xFF, 0xFF), // NeutralForeground1 dark
+  textSecondary:    rgb(0xA1, 0x9F, 0x9D), // NeutralForeground2 dark
+  textDisabled:     rgb(0x60, 0x5E, 0x5C), // NeutralForegroundDisabled dark
+
+  brand:            rgb(0x47, 0x9E, 0xF5), // BrandBackground dark
+  brandTint40:      rgb(0x1F, 0x3A, 0x52), // BrandBackground2 dark
+
+  shadow2: [
+    { type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.32 }, offset: { x: 0, y: 1.6 }, radius: 3.6, spread: 0, visible: true, blendMode: 'NORMAL' },
+    { type: 'DROP_SHADOW', color: { r: 0, g: 0, b: 0, a: 0.28 }, offset: { x: 0, y: 0.3 }, radius: 0.9, spread: 0, visible: true, blendMode: 'NORMAL' },
+  ] as Effect[],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function createVariantSet(
   base: ComponentNode,
@@ -21,73 +78,83 @@ export function createVariantSet(
 ): { set: ComponentSetNode; baseComp: ComponentNode } {
   const parent = base.parent as FrameNode | PageNode;
 
-  const dark     = base.clone();
-  const hover    = base.clone();
-  const disabled = base.clone();
+  const hover     = base.clone();
+  const selected  = base.clone();
+  const disabled  = base.clone();
+  const dark      = base.clone();
 
-  base.name     = 'Theme=Light, State=Default';
-  dark.name     = 'Theme=Dark, State=Default';
-  hover.name    = 'Theme=Dark, State=Hover';
-  disabled.name = 'Theme=Light, State=Disabled';
+  base.name      = 'Theme=Light, State=Default';
+  hover.name     = 'Theme=Light, State=Hover';
+  selected.name  = 'Theme=Light, State=Selected';
+  disabled.name  = 'Theme=Light, State=Disabled';
+  dark.name      = 'Theme=Dark, State=Default';
 
   const w = base.width + 24;
-  dark.x     = base.x + w;
-  hover.x    = base.x + w * 2;
+  hover.x    = base.x + w;
+  selected.x = base.x + w * 2;
   disabled.x = base.x + w * 3;
-  dark.y = hover.y = disabled.y = base.y;
+  dark.x     = base.x + w * 4;
+  hover.y = selected.y = disabled.y = dark.y = base.y;
 
-  parent.appendChild(dark);
   parent.appendChild(hover);
+  parent.appendChild(selected);
   parent.appendChild(disabled);
+  parent.appendChild(dark);
 
-  // Light stays exactly as-is
-  applyDark(dark);
   applyHover(hover);
+  applySelected(selected);
   applyDisabled(disabled);
+  applyDark(dark);
 
-  const set = figma.combineAsVariants([base, dark, hover, disabled], parent);
+  const set = figma.combineAsVariants([base, hover, selected, disabled, dark], parent);
   set.name = setName;
 
   return { set, baseComp: base };
 }
 
-// ─── Dark: flip clearly-light fills to dark equivalents, light text ───────────
+// ─── Light / Hover ────────────────────────────────────────────────────────────
+// NeutralBackground1Hover bg, NeutralStroke1Hover border, text unchanged.
 
-function applyDark(comp: ComponentNode): void {
+function applyHover(comp: ComponentNode): void {
+  setRootFill(comp, L.canvasHover);
+  setRootStroke(comp, L.strokeHover, 1, 'INSIDE');
+
   walk(comp as unknown as SceneNode, (node, isRoot) => {
-    if (node.type === 'TEXT') {
-      flipTextToDark(node as TextNode);
-      return;
-    }
-    if (!('fills' in node) || (node as GeometryMixin).fills === figma.mixed) return;
-    const fills = (node as GeometryMixin).fills as readonly Paint[];
-    const solid = fills.find(p => p.type === 'SOLID') as SolidPaint | undefined;
-    if (!solid) return;
-
-    if (isRoot) {
-      // Root background: invert to dark
-      (node as GeometryMixin).fills = [solidPaint(invertToNearBlack(solid.color))];
-      // Carry the original border but keep it; don't change stroke color
-    } else if (luminance(solid.color) > 0.6) {
-      // Child light fills → darken proportionally
-      (node as GeometryMixin).fills = [solidPaint(invertToNearBlack(solid.color))];
-    }
-    // Dark fills, accent colors, gradients etc. are left alone
+    if (isRoot) return;
+    if (node.type === 'TEXT') return; // text color unchanged on hover
+    replaceLightSurfaces(node as SceneNode, L.canvasHover, L.subtle);
   });
 }
 
-// ─── Hover: dark variant + replace/add spec border color ─────────────────────
+// ─── Light / Selected ─────────────────────────────────────────────────────────
+// Communication Tint 40 bg + 3px Brand left bar. Fluent pattern for list rows,
+// nav items, and control panel selections.
 
-function applyHover(comp: ComponentNode): void {
-  applyDark(comp);
-  // Replace root stroke with spec hover color; preserve weight/align from original
-  const existingWeight = comp.strokeWeight !== figma.mixed ? (comp.strokeWeight as number) : 1;
-  comp.strokes      = [solidPaint(HOVER_BORDER)];
-  comp.strokeWeight = existingWeight || 1;
-  comp.strokeAlign  = 'INSIDE';
+function applySelected(comp: ComponentNode): void {
+  setRootFill(comp, L.brandTint40);
+
+  // Left accent bar only (Fluent selected indicator)
+  comp.strokes            = [solid(L.brand)];
+  comp.strokeAlign        = 'INSIDE';
+  comp.strokeTopWeight    = 0;
+  comp.strokeRightWeight  = 0;
+  comp.strokeBottomWeight = 0;
+  comp.strokeLeftWeight   = 3;
+
+  walk(comp as unknown as SceneNode, (node, isRoot) => {
+    if (isRoot) return;
+    if (node.type === 'TEXT') {
+      // Ensure text reads clearly on tinted bg
+      setTextIfDark(node as TextNode, L.textPrimary);
+      return;
+    }
+    replaceLightSurfaces(node as SceneNode, L.brandTint40, L.brandTint40);
+  });
 }
 
-// ─── Disabled: desaturate fills + dim opacity, keep structure ────────────────
+// ─── Light / Disabled ─────────────────────────────────────────────────────────
+// NeutralForegroundDisabled text, desaturated fills, 40% opacity.
+// Fluent spec: disabled elements are visible but non-interactive.
 
 function applyDisabled(comp: ComponentNode): void {
   walk(comp as unknown as SceneNode, (node) => {
@@ -95,79 +162,156 @@ function applyDisabled(comp: ComponentNode): void {
       const t = node as TextNode;
       if (t.fills !== figma.mixed) {
         const fills = t.fills as readonly Paint[];
-        const solid = fills.find(p => p.type === 'SOLID') as SolidPaint | undefined;
-        if (solid) t.fills = [solidPaint(desaturate(solid.color))];
+        const s = solidOf(fills);
+        if (s) t.fills = [solid(desaturate(s.color))];
       }
       return;
     }
-    if (!('fills' in node) || (node as GeometryMixin).fills === figma.mixed) return;
+    if (!hasFills(node)) return;
     const fills = (node as GeometryMixin).fills as readonly Paint[];
-    const newFills = fills.map(p => {
-      if (p.type === 'SOLID') return solidPaint(desaturate((p as SolidPaint).color));
-      return p;
-    });
-    (node as GeometryMixin).fills = newFills as Paint[];
+    (node as GeometryMixin).fills = fills.map(p =>
+      p.type === 'SOLID' ? solid(desaturate((p as SolidPaint).color)) : p
+    ) as Paint[];
   });
 
-  // Dim the strokes too
-  if (comp.strokes && comp.strokes.length > 0) {
-    comp.strokes = (comp.strokes as Paint[]).map(p => {
-      if (p.type === 'SOLID') return solidPaint(desaturate((p as SolidPaint).color));
-      return p;
-    });
+  if (comp.strokes?.length) {
+    comp.strokes = (comp.strokes as Paint[]).map(p =>
+      p.type === 'SOLID' ? solid(desaturate((p as SolidPaint).color)) : p
+    );
   }
 
-  comp.opacity = (comp.opacity ?? 1) * 0.45;
+  comp.opacity = (comp.opacity ?? 1) * 0.40;
 }
 
-// ─── Color math ───────────────────────────────────────────────────────────────
+// ─── Dark / Default ───────────────────────────────────────────────────────────
+// NeutralBackground1 dark canvas, elevated child surfaces, Fluent dark text.
 
-/**
- * Inverts a clearly-light color to a dark equivalent while keeping
- * the same relative lightness difference from black.
- */
-function invertToNearBlack(c: RGB): RGB {
-  const lum = luminance(c);
-  // Map lightness: 1.0 → 0.08 (near-black), 0.6 → 0.12, keeping hue
-  const darkBase = 0.08;
-  const scale    = darkBase / Math.max(lum, 0.01);
-  return {
-    r: Math.min(1, c.r * scale * 1.05),
-    g: Math.min(1, c.g * scale * 1.05),
-    b: Math.min(1, c.b * scale * 1.10), // slight blue tint for depth
-  };
+function applyDark(comp: ComponentNode): void {
+  setRootFill(comp, D.canvas);
+
+  // Reset to uniform stroke so we never hit the "Cannot unwrap symbol" error
+  // that occurs when individual stroke weights are active and strokeWeight is set.
+  comp.strokeTopWeight    = 1;
+  comp.strokeRightWeight  = 1;
+  comp.strokeBottomWeight = 1;
+  comp.strokeLeftWeight   = 1;
+  comp.strokes            = [solid(D.stroke)];
+  comp.strokeAlign        = 'INSIDE';
+  comp.effects            = D.shadow2;
+
+  walk(comp as unknown as SceneNode, (node, isRoot) => {
+    if (isRoot) return;
+
+    if (node.type === 'TEXT') {
+      flipTextDark(node as TextNode);
+      return;
+    }
+
+    if (!hasFills(node)) return;
+    const fills = (node as GeometryMixin).fills as readonly Paint[];
+    const s = solidOf(fills);
+    if (!s) return;
+
+    const lum = luminance(s.color);
+    if (lum > 0.85) {
+      // Near-white surfaces → NeutralBackground3 dark (slightly elevated)
+      (node as GeometryMixin).fills = [solid(D.canvasElevated)];
+    } else if (lum > 0.5) {
+      // Mid-light surfaces → canvas hover dark
+      (node as GeometryMixin).fills = [solid(D.canvasHover)];
+    }
+    // Dark fills, accent colors, images, gradients — untouched
+  });
 }
 
-function flipTextToDark(node: TextNode): void {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function setRootFill(comp: ComponentNode, color: RGB): void {
+  if (hasFills(comp as unknown as SceneNode)) {
+    comp.fills = [solid(color)];
+  }
+}
+
+function setRootStroke(comp: ComponentNode, color: RGB, weight: number, align: 'INSIDE' | 'OUTSIDE' | 'CENTER'): void {
+  // Reset individual weights first — Figma throws "Cannot unwrap symbol"
+  // if strokeWeight is set while individual weights are active.
+  comp.strokeTopWeight    = weight;
+  comp.strokeRightWeight  = weight;
+  comp.strokeBottomWeight = weight;
+  comp.strokeLeftWeight   = weight;
+  comp.strokes            = [solid(color)];
+  comp.strokeAlign        = align;
+}
+
+function replaceLightSurfaces(node: SceneNode, replacement: RGB, subtleReplacement: RGB): void {
+  if (!hasFills(node)) return;
+  const fills = (node as GeometryMixin).fills as readonly Paint[];
+  const s = solidOf(fills);
+  if (!s) return;
+  const lum = luminance(s.color);
+  if (lum > 0.96) {
+    (node as GeometryMixin).fills = [solid(replacement)];
+  } else if (lum > 0.85) {
+    (node as GeometryMixin).fills = [solid(subtleReplacement)];
+  }
+}
+
+// Selected text tokens
+const SEL_TEXT_PRI: RGB = rgb(0x24, 0x24, 0x24); // #242424
+const SEL_TEXT_SEC: RGB = rgb(0x60, 0x5E, 0x5C); // #605E5C
+
+function setTextIfDark(node: TextNode, _color: RGB): void {
   if (node.fills === figma.mixed) return;
   const fills = node.fills as readonly Paint[];
-  const solid = fills.find(p => p.type === 'SOLID') as SolidPaint | undefined;
-  if (!solid) return;
-  const lum = luminance(solid.color);
-  // Only flip dark text — leave light text (already ok on dark bg) alone
-  if (lum < 0.5) {
-    node.fills = [solidPaint({ r: 0.96, g: 0.96, b: 0.97 })];
+  const s = solidOf(fills);
+  if (!s) return;
+  const lum = luminance(s.color);
+  if (lum < 0.15) {
+    // Very dark / black text → primary selected text color
+    node.fills = [solid(SEL_TEXT_PRI)];
+  } else if (lum < 0.5) {
+    // Mid-tone / secondary text
+    node.fills = [solid(SEL_TEXT_SEC)];
   }
 }
 
-function desaturate(c: RGB): RGB {
-  const lum = luminance(c);
-  return {
-    r: c.r * 0.25 + lum * 0.75,
-    g: c.g * 0.25 + lum * 0.75,
-    b: c.b * 0.25 + lum * 0.75,
-  };
+function flipTextDark(node: TextNode): void {
+  if (node.fills === figma.mixed) return;
+  const fills = node.fills as readonly Paint[];
+  const s = solidOf(fills);
+  if (!s) return;
+  const lum = luminance(s.color);
+  if (lum < 0.2) {
+    node.fills = [solid(D.textPrimary)];   // dark text → white
+  } else if (lum < 0.55) {
+    node.fills = [solid(D.textSecondary)]; // mid text → #A19F9D
+  }
+}
+
+function hasFills(node: SceneNode): boolean {
+  return 'fills' in node && (node as GeometryMixin).fills !== figma.mixed;
+}
+
+function solidOf(fills: readonly Paint[]): SolidPaint | undefined {
+  return fills.find(p => p.type === 'SOLID') as SolidPaint | undefined;
+}
+
+function solid(color: RGB): SolidPaint {
+  return { type: 'SOLID', color } as SolidPaint;
+}
+
+function rgb(r: number, g: number, b: number): RGB {
+  return { r: r / 255, g: g / 255, b: b / 255 };
 }
 
 function luminance({ r, g, b }: RGB): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-function solidPaint(color: RGB): SolidPaint {
-  return { type: 'SOLID', color } as SolidPaint;
+function desaturate(c: RGB): RGB {
+  const lum = luminance(c);
+  return { r: c.r * 0.2 + lum * 0.8, g: c.g * 0.2 + lum * 0.8, b: c.b * 0.2 + lum * 0.8 };
 }
-
-// ─── Tree walker ──────────────────────────────────────────────────────────────
 
 function walk(
   node: SceneNode,

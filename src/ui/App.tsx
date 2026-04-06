@@ -5,28 +5,44 @@ import { PluginToUIMessage, SerializedNode } from '../shared/types';
 
 type AppState = 'idle' | 'converting' | 'converted' | 'error';
 
-const TYPE_ICON: Record<string, string> = {
-  FRAME: '▣', GROUP: '◈', TEXT: 'T', RECTANGLE: '▭',
-  ELLIPSE: '◯', VECTOR: '✦', COMPONENT: '❖', INSTANCE: '◆',
-};
+/** Recursively collect every Frame/Group node that will become a component. */
+function collectConvertible(node: SerializedNode, depth = 0): SerializedNode[] {
+  const results: SerializedNode[] = [];
+  if (node.type === 'FRAME' || node.type === 'GROUP') {
+    results.push(node);
+  }
+  if (node.children) {
+    for (const child of node.children) {
+      results.push(...collectConvertible(child, depth + 1));
+    }
+  }
+  return results;
+}
 
-function LayerRow({ node }: { node: SerializedNode }) {
-  const icon = TYPE_ICON[node.type] ?? '·';
+function ComponentRow({ node, active }: { node: SerializedNode; active: boolean }) {
   return (
-    <div className="layer-row">
-      <span className="layer-icon">{icon}</span>
-      <span className="layer-name">{node.name}</span>
-      <span className="layer-type">{node.type.charAt(0) + node.type.slice(1).toLowerCase()}</span>
+    <div className={`comp-row ${active ? 'comp-row-active' : ''}`}>
+      <span className="comp-row-icon">❖</span>
+      <div className="comp-row-meta">
+        <span className="comp-row-name">{node.name}</span>
+        <span className="comp-row-detail">
+          {node.type === 'FRAME' ? 'Frame' : 'Group'}
+          {node.width != null && ` · ${Math.round(node.width)}×${Math.round(node.height ?? 0)}`}
+          {node.children ? ` · ${node.children.length} layers` : ''}
+        </span>
+      </div>
+      <span className="comp-row-badge">5 variants</span>
     </div>
   );
 }
 
 export default function App() {
-  const [appState, setAppState]     = useState<AppState>('idle');
-  const [prompt, setPrompt]         = useState('');
+  const [appState, setAppState]               = useState<AppState>('idle');
+  const [prompt, setPrompt]                   = useState('');
   const [convertProgress, setConvertProgress] = useState('');
   const [convertedCount, setConvertedCount]   = useState(0);
-  const [error, setError]           = useState('');
+  const [activeNode, setActiveNode]           = useState('');
+  const [error, setError]                     = useState('');
 
   const { selectedNode, selectionError } = useFigmaSelection();
 
@@ -37,13 +53,16 @@ export default function App() {
       switch (msg.type) {
         case 'COMPONENTIZE_PROGRESS':
           setConvertProgress(msg.name);
+          setActiveNode(msg.name);
           break;
         case 'COMPONENTIZE_COMPLETE':
           setConvertedCount(msg.count);
+          setActiveNode('');
           setAppState('converted');
           break;
         case 'ERROR':
           setError(msg.message);
+          setActiveNode('');
           setAppState('error');
           break;
       }
@@ -57,6 +76,7 @@ export default function App() {
     setError('');
     setConvertProgress('');
     setConvertedCount(0);
+    setActiveNode('');
     setAppState('converting');
     parent.postMessage({ pluginMessage: { type: 'COMPONENTIZE_IN_PLACE', prompt: prompt.trim() || undefined } }, '*');
   };
@@ -66,10 +86,11 @@ export default function App() {
     setError('');
     setConvertProgress('');
     setConvertedCount(0);
+    setActiveNode('');
   };
 
-  const layers: SerializedNode[] = selectedNode?.children ?? (selectedNode ? [selectedNode] : []);
-  const canConvert = !!selectedNode && appState === 'idle';
+  const convertible = selectedNode ? collectConvertible(selectedNode) : [];
+  const canConvert   = !!selectedNode && appState === 'idle';
 
   return (
     <div className="app">
@@ -86,50 +107,66 @@ export default function App() {
       {/* ── Main ───────────────────────────────────────────────────────────── */}
       <main className="main">
 
-        {/* Selection card */}
-        <div className="glass-card">
-          <p className="card-label">Selection</p>
-
-          {selectedNode ? (
-            <>
-              <div className="selection-header">
-                <span className="sel-icon">▣</span>
-                <div className="sel-meta">
-                  <span className="sel-name">{selectedNode.name}</span>
-                  <span className="sel-size">
-                    {Math.round(selectedNode.width ?? 0)} × {Math.round(selectedNode.height ?? 0)} px
-                    {layers.length > 0 && ` · ${layers.length} layer${layers.length !== 1 ? 's' : ''}`}
-                  </span>
-                </div>
-                <span className="sel-check">✓</span>
+        {/* Selection summary */}
+        {selectedNode ? (
+          <div className="glass-card">
+            <div className="selection-header">
+              <span className="sel-icon">▣</span>
+              <div className="sel-meta">
+                <span className="sel-name">{selectedNode.name}</span>
+                <span className="sel-size">
+                  {Math.round(selectedNode.width ?? 0)} × {Math.round(selectedNode.height ?? 0)} px
+                </span>
               </div>
-
-              {layers.length > 0 && (
-                <div className="layer-list">
-                  {layers.slice(0, 12).map(l => <LayerRow key={l.id} node={l} />)}
-                  {layers.length > 12 && (
-                    <p className="layer-more">+{layers.length - 12} more layers</p>
-                  )}
-                </div>
-              )}
-            </>
-          ) : (
+              <span className="sel-check">✓</span>
+            </div>
+          </div>
+        ) : (
+          <div className="glass-card">
             <div className="empty-state">
               <span className="empty-icon">▣</span>
               <span className="empty-hint">{selectionError || 'Select a Frame in Figma'}</span>
             </div>
+          </div>
+        )}
+
+        {/* Components to be created */}
+        <div className="glass-card">
+          <div className="comp-list-header">
+            <p className="card-label">Components to create</p>
+            {convertible.length > 0 && (
+              <span className="comp-count-badge">{convertible.length}</span>
+            )}
+          </div>
+
+          {convertible.length > 0 ? (
+            <div className="comp-list">
+              {convertible.map(n => (
+                <ComponentRow
+                  key={n.id}
+                  node={n}
+                  active={appState === 'converting' && activeNode === n.name}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="comp-list-empty">
+              {selectedNode ? 'No convertible frames found inside selection.' : 'No selection.'}
+            </p>
           )}
         </div>
 
-        {/* Prompt card */}
+        {/* Prompt */}
         <div className="glass-card">
-          <p className="card-label">Component purpose <span className="card-label-optional">(optional)</span></p>
+          <p className="card-label">
+            Purpose&nbsp;<span className="card-label-optional">(optional)</span>
+          </p>
           <textarea
             className="prompt-input"
             placeholder="e.g. Chat interface with a message input, send button, and emoji picker…"
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
-            rows={3}
+            rows={2}
             disabled={appState === 'converting'}
           />
         </div>
